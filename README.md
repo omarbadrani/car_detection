@@ -388,7 +388,7 @@ copies or substantial portions of the Software.
 
 ## 👤 Auteur
 
-**Développeur Principal** - [Votre Nom](https://github.com/votre-username)
+**Développeur Principal** - [omar badrani](https://github.com/omarbadranni)
 
 ## 🙏 Remerciements
 
