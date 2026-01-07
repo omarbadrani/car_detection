@@ -454,7 +454,7 @@ Pour obtenir de l'aide :
 
 ---
 
-**Dernière mise à jour** : Janvier 2024  
+**Dernière mise à jour** : Janvier 2025  
 **Version** : 1.0.0  
 **Support Python** : 3.7+  
 **Systèmes supportés** : Windows, Linux, macOS
