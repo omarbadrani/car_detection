@@ -1,464 +1,156 @@
-# ANPR System - Automatic Number Plate Recognition 🚗
+# 🚗 ANPR System - Automatic Number Plate Recognition
 
 ![Python](https://img.shields.io/badge/Python-3.7%2B-blue)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.5%2B-green)
 ![Tesseract](https://img.shields.io/badge/Tesseract-OCR-orange)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
-Un système complet de reconnaissance automatique de plaques d'immatriculation (ANPR) avec interface graphique, traitement vidéo en temps réel, base de données et surveillance continue.
+A complete Automatic Number Plate Recognition system with GUI, real-time video processing, database, and continuous monitoring.
 
-## ✨ Fonctionnalités
+## ✨ Features
 
-### 🎯 Détection Intelligente
-- **Détection de plaques** : Algorithmes de vision par ordinateur avancés
-- **Reconnaissance OCR** : Tesseract pour la lecture du texte
-- **Prétraitement d'image** : Filtres et améliorations pour une meilleure détection
-- **Détection multi-plaques** : Capacité à détecter plusieurs plaques simultanément
+### 🎯 Intelligent Detection
+- **Plate detection**: Advanced computer vision algorithms
+- **OCR recognition**: Tesseract for text reading
+- **Image preprocessing**: Filters and enhancements for better detection
+- **Multi-plate detection**: Detect multiple plates simultaneously
 
-### 📹 Sources d'Entrée Multiples
-- **Caméra en direct** : Surveillance temps réel avec n'importe quelle webcam
-- **Fichiers vidéo** : Importation et traitement de vidéos MP4, AVI, MOV, etc.
-- **Images statiques** : Détection sur photos (à implémenter)
-- **Multi-caméras** : Support de plusieurs sources simultanément
+### 📹 Multiple Input Sources
+- **Live camera**: Real-time surveillance with any webcam
+- **Video files**: Import and process MP4, AVI, MOV, etc.
+- **Static images**: Detection on photos (to implement)
+- **Multi-camera**: Support multiple simultaneous sources
 
-### 🗄️ Gestion des Données
-- **Base de données SQLite** : Stockage local des plaques détectées
-- **Historique complet** : Date, heure, source, image
-- **Export des résultats** : Fichiers texte pour analyse externe
-- **Images sauvegardées** : Capture des plaques détectées
+### 🗄️ Data Management
+- **SQLite database**: Local storage of detected plates
+- **Complete history**: Date, time, source, image
+- **Export results**: Text files for external analysis
+- **Saved images**: Capture of detected plates
 
-### 🖥️ Interface Professionnelle
-- **Interface Tkinter** : Interface utilisateur intuitive
-- **Barre de progression** : Suivi du traitement en temps réel
-- **Statistiques en direct** : Compteur de détections
-- **Affichage des résultats** : Consultation de l'historique complet
+### 🖥️ Professional Interface
+- **Tkinter GUI**: Intuitive user interface
+- **Progress bar**: Real-time processing tracking
+- **Live statistics**: Detection counter
+- **Results display**: Full history review
 
-## 🖼️ Architecture du Système
+## 🚀 Quick Installation
 
-```
-┌─────────────────────────────────────────────────────┐
-│           ANPR System - Plaque Recognition          │
-├─────────────────────────────────────────────────────┤
-│                                                     │
-│  [Démarrer Surveillance Caméra]                     │
-│  [Importer et Traiter une Vidéo]                    │
-│  [Afficher les Résultats]                           │
-│                                                     │
-│  Progression: [████████████████░░░░░░░░] 65%        │
-│  Plaques détectées: 12                              │
-│                                                     │
-│  Statut: Traitement en cours...                     │
-│                                                     │
-│  [Quitter]                                          │
-└─────────────────────────────────────────────────────┘
-```
+### Essential Requirements
+1. **Python 3.7+**
+2. **Tesseract OCR** (for text recognition)
+3. **Webcam** (for live surveillance)
 
-## 🚀 Installation Rapide
-
-### Prérequis Essentiels
-
-1. **Python 3.7 ou supérieur**
-2. **Tesseract OCR** (pour la reconnaissance de texte)
-3. **Webcam** (pour la surveillance en direct)
-
-### Installation sur Windows
-
-#### 1. Installer Tesseract OCR
-```powershell
-# Télécharger et installer Tesseract depuis:
-# https://github.com/UB-Mannheim/tesseract/wiki
-
-# Vérifier l'installation
-tesseract --version
-```
-
-#### 2. Installer les Dépendances Python
+### Install Dependencies
 ```bash
-# Créer un environnement virtuel
+# Create virtual environment
 python -m venv venv
+
+# Activate (Windows)
 venv\Scripts\activate
+# Activate (Linux/Mac)
+source venv/bin/activate
 
-# Installer les packages
+# Install packages
 pip install opencv-python pytesseract pillow imutils numpy
 ```
 
-### Installation sur Linux
-```bash
-# Installer Tesseract
-sudo apt-get update
-sudo apt-get install tesseract-ocr
-sudo apt-get install libtesseract-dev
-
-# Installer les dépendances Python
-pip install opencv-python pytesseract pillow imutils numpy
-```
-
-### Installation sur macOS
-```bash
-# Installer Tesseract via Homebrew
-brew install tesseract
-
-# Installer les dépendances Python
-pip install opencv-python pytesseract pillow imutils numpy
-```
+### Install Tesseract OCR
+- **Windows**: Download from [UB-Mannheim/tesseract](https://github.com/UB-Mannheim/tesseract/wiki)
+- **Linux**: `sudo apt-get install tesseract-ocr`
+- **macOS**: `brew install tesseract`
 
 ## ⚙️ Configuration
 
-### Configuration du Chemin Tesseract
-Dans le code, modifiez la ligne suivante selon votre installation :
-
+### Set Tesseract Path
 ```python
-# Pour Windows (chemin par défaut)
+# Windows (default path)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-# Pour Linux/macOS
+# Linux/macOS
 # pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 ```
 
-### Structure des Dossiers
-Le système crée automatiquement :
-```
-project/
-├── detected_plates/      # Images des plaques détectées
-├── license_plates.db     # Base de données SQLite
-├── anpr_system.py        # Application principale
-└── README.md            # Documentation
-```
+## 🎮 Usage Guide
 
-## 🎮 Guide d'Utilisation
-
-### 1. **Lancement de l'Application**
+### 1. **Launch Application**
 ```bash
 python anpr_system.py
 ```
 
-### 2. **Surveillance Caméra en Temps Réel**
-1. Cliquez sur **"Démarrer Surveillance Caméra"**
-2. La webcam s'active automatiquement
-3. Les plaques détectées sont enregistrées
-4. Appuyez sur **'q'** dans la fenêtre vidéo pour arrêter
+### 2. **Live Camera Surveillance**
+1. Click **"Start Camera Surveillance"**
+2. Webcam activates automatically
+3. Detected plates are recorded
+4. Press **'q'** in video window to stop
 
-### 3. **Traitement de Vidéos**
-1. Cliquez sur **"Importer et Traiter une Vidéo"**
-2. Sélectionnez un fichier vidéo (MP4, AVI, etc.)
-3. Suivez la progression dans la barre
-4. Consultez les résultats après traitement
+### 3. **Process Video Files**
+1. Click **"Import and Process Video"**
+2. Select video file (MP4, AVI, etc.)
+3. Track progress in the bar
+4. View results after processing
 
-### 4. **Consultation des Résultats**
-1. Cliquez sur **"Afficher les Résultats"**
-2. Visualisez toutes les plaques détectées
-3. Exportez les données en fichier texte
-4. Consultez les images sauvegardées
+### 4. **View Results**
+1. Click **"Display Results"**
+2. View all detected plates
+3. Export data to text file
+4. Check saved images
 
-## 🔧 Paramètres Techniques
+## 📊 Performance
 
-### Algorithme de Détection
-Le système utilise une approche en plusieurs étapes :
+| Scenario | Detection Rate | Processing Time | OCR Accuracy |
+|----------|----------------|-----------------|--------------|
+| Clear plate on contrasted background | 95% | 50-100ms | 90-95% |
+| Low light conditions | 70% | 60-120ms | 70-80% |
+| Tilted/rotated plate | 65% | 70-150ms | 60-75% |
+| Multiple vehicles | 85% | 100-200ms | 85-90% |
 
-1. **Prétraitement** :
-   - Conversion en niveaux de gris
-   - Filtrage bilatéral pour réduire le bruit
-   - Détection de contours Canny
+## 🗄️ Database
 
-2. **Détection des plaques** :
-   - Recherche de contours avec 4 côtés
-   - Filtrage par ratio largeur/hauteur (2:1 à 5:1)
-   - Sélection des régions candidates
-
-3. **Reconnaissance OCR** :
-   - Seuillage OTSU pour binarisation
-   - Configuration Tesseract optimisée
-   - Nettoyage du texte détecté
-
-### Optimisation des Performances
-- **Saut d'images** : Traitement de 5 images par seconde maximum
-- **Période de détection** : 2 secondes entre deux détections
-- **Redimensionnement** : Images redimensionnées à 800px de large
-
-## 📊 Performances
-
-| Scénario | Taux de Détection | Temps de Traitement | Précision OCR |
-|----------|-------------------|---------------------|---------------|
-| Plaque claire sur fond contrasté | 95% | 50-100ms | 90-95% |
-| Conditions de faible luminosité | 70% | 60-120ms | 70-80% |
-| Plaque inclinée/rotatée | 65% | 70-150ms | 60-75% |
-| Multiples véhicules | 85% | 100-200ms | 85-90% |
-
-**Facteurs influençant la précision** :
-- Qualité de la caméra
-- Éclairage ambiant
-- Angle de la plaque
-- Netteté de l'image
-- Police de caractères
-
-## 🗄️ Base de Données
-
-### Structure de la Table
+### Table Structure
 ```sql
 CREATE TABLE detected_plates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    plate_text TEXT,          -- Texte de la plaque
-    detection_time DATETIME,  -- Date et heure de détection
-    image_path TEXT,          -- Chemin de l'image sauvegardée
-    source_type TEXT          -- Type de source (caméra, vidéo)
+    plate_text TEXT,
+    detection_time DATETIME,
+    image_path TEXT,
+    source_type TEXT
 )
 ```
 
-### Exemple de Données
-```
-ID: 1
-Plaque: AB123CD
-Date: 2024-01-15 14:30:45
-Source: caméra
-Image: detected_plates/plate_20240115_143045_AB123CD.jpg
-```
+## 🔧 Troubleshooting
 
-## 🐛 Dépannage
+### Common Issues:
+- **Tesseract not found**: Check path in `pytesseract.pytesseract.tesseract_cmd`
+- **Camera not detected**: Try different camera indices (0, 1, 2...)
+- **Low detection rate**: Improve lighting, adjust camera position
+- **OCR errors**: Verify Tesseract configuration, improve preprocessing
 
-### Problèmes Courants
-
-#### 1. **Tesseract non trouvé**
+## 📁 Project Structure
 ```
-Erreur: TesseractNotFoundError
-Solution: Vérifier le chemin dans pytesseract.pytesseract.tesseract_cmd
-```
-
-#### 2. **Caméra non détectée**
-```
-Solution: Essayer différents index de caméra (0, 1, 2...)
+anpr-system/
+├── anpr_system.py        # Main application
+├── requirements.txt      # Dependencies
+├── detected_plates/      # Detected plate images
+├── license_plates.db     # SQLite database
+└── README.md            # Documentation
 ```
 
-#### 3. **Faible taux de détection**
-```
-Solutions:
-- Améliorer l'éclairage
-- Ajuster la position de la caméra
-- Modifier les seuils de détection
-```
+## 📄 License
+MIT License - see [LICENSE](LICENSE) for details.
 
-#### 4. **Erreurs OCR**
-```
-Solutions:
-- Vérifier la configuration Tesseract
-- Améliorer le prétraitement d'image
-- Ajouter un dictionnaire de plaques
-```
-
-### Mode Debug
-```python
-# Activer les logs détaillés
-import logging
-logging.basicConfig(level=logging.DEBUG)
-
-# Tester la détection sur une image
-test_image = cv2.imread('test_plate.jpg')
-result = detector.detect_license_plate(test_image)
-```
-
-## 🔮 Améliorations Possibles
-
-### Court Terme
-- [ ] Support des images statiques
-- [ ] Interface web pour surveillance à distance
-- [ ] Notifications en temps réel
-- [ ] Export CSV/Excel
-
-### Moyen Terme
-- [ ] Apprentissage automatique pour améliorer la détection
-- [ ] Support des plaques internationales
-- [ ] Analyse des statistiques de trafic
-- [ ] Intégration avec des systèmes de sécurité
-
-### Long Terme
-- [ ] Reconnaissance de modèle de véhicule
-- [ ] Estimation de vitesse
-- [ ] Système de suivi de véhicules
-- [ ] API REST pour intégration
-
-## 🛠️ Développement
-
-### Architecture du Code
-```python
-# Structure principale
-anpr_system.py
-├── class DatabaseManager      # Gestion base de données
-├── class LicensePlateDetector # Détection et OCR
-├── class LicensePlateApp      # Interface utilisateur
-└── Main execution
-```
-
-### Ajout de Nouvelles Fonctionnalités
-```python
-# Exemple : Ajouter un filtre par date
-def filter_by_date(start_date, end_date):
-    """Filtrer les plaques par période"""
-    query = """
-        SELECT * FROM detected_plates 
-        WHERE detection_time BETWEEN ? AND ?
-        ORDER BY detection_time DESC
-    """
-    return self.cursor.execute(query, (start_date, end_date)).fetchall()
-
-# Exemple : Statistiques avancées
-def get_statistics(self):
-    """Obtenir des statistiques sur les détections"""
-    stats = {
-        'total_detections': self.get_total_count(),
-        'detections_today': self.get_today_count(),
-        'most_common_plate': self.get_most_common(),
-        'detection_rate': self.calculate_detection_rate()
-    }
-    return stats
-```
-
-## 📋 Cas d'Utilisation
-
-### 🏢 Sécurité d'Entreprise
-- Contrôle d'accès parking
-- Surveillance des entrées/sorties
-- Gestion des visiteurs
-- Logs de sécurité
-
-### 🏘️ Résidentiel
-- Surveillance de copropriété
-- Gestion d'accès résidentiel
-- Sécurité de quartier
-- Stationnement contrôlé
-
-### 🛣️ Gestion du Trafic
-- Comptage de véhicules
-- Surveillance de passages
-- Application des restrictions
-- Analyse du flux routier
-
-### 🎓 Éducation/Recherche
-- Projets académiques
-- Recherche en vision par ordinateur
-- Démonstrations techniques
-- Prototypes de systèmes intelligents
-
-## 🔒 Aspects Sécuritaires
-
-### Protection des Données
-- Données stockées localement
-- Aucune transmission réseau
-- Images sauvegardées uniquement pour les plaques détectées
-- Base de données chiffrable
-
-### Respect de la Vie Privée
-- **Option de floutage** : Visages et informations sensibles
-- **Période de rétention** : Données effaçables automatiquement
-- **Accès contrôlé** : Interface protégée par mot de passe (optionnel)
-- **Conformité RGPD** : Fonctionnalités de gestion des consentements
-
-## 🤝 Contribution
-
-### Comment Contribuer
-1. **Fork** le dépôt
-2. **Créez une branche** (`git checkout -b feature/amélioration`)
-3. **Commitez vos changements** (`git commit -am 'Ajout de fonctionnalité'`)
-4. **Push vers la branche** (`git push origin feature/amélioration`)
-5. **Ouvrez une Pull Request**
-
-### Normes de Code
-- Suivre PEP 8
-- Documenter les fonctions
-- Ajouter des tests unitaires
-- Mettre à jour la documentation
-
-## 📄 Licence
-
-Ce projet est sous licence MIT. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
-
-```
-MIT License
-
-Copyright (c) 2024 ANPR System
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-```
-
-## 👤 Auteur
-
-**Développeur Principal** - [omar badrani](https://github.com/omarbadranni)
-
-## 🙏 Remerciements
-
-- **OpenCV** - Pour les outils de vision par ordinateur
-- **Tesseract OCR** - Pour la reconnaissance de texte
-- **Python Community** - Pour les bibliothèques et le support
-- **Contributeurs** - Pour les améliorations et suggestions
-
-## 📞 Support
-
-Pour obtenir de l'aide :
-
-1. **Consulter les Issues** sur GitHub
-2. **Vérifier la documentation** et les exemples
-3. **Créer une nouvelle issue** avec :
-   - Description détaillée du problème
-   - Étapes pour reproduire
-   - Captures d'écran si possible
-   - Configuration système
-
-## 📚 Ressources Additionnelles
-
-### Documentation
-- [Documentation OpenCV](https://docs.opencv.org/)
-- [Documentation Tesseract](https://tesseract-ocr.github.io/)
-- [Guide PyTesseract](https://github.com/madmaze/pytesseract)
-
-### Modèles Pré-entraînés
-- [Modèles ANPR avancés](https://github.com/openalpr/openalpr)
-- [Jeux de données de plaques](https://www.kaggle.com/datasets)
-- [Modèles de détection YOLO](https://github.com/ultralytics/yolov5)
-
-### Tutoriels
-- [Tutoriel ANPR complet](https://pyimagesearch.com/2020/09/21/opencv-automatic-license-number-plate-recognition-anpr/)
-- [Cours vision par ordinateur](https://www.coursera.org/learn/computer-vision)
-- [Guide pratique OpenCV](https://leanpub.com/opencv)
+## 👤 Author
+**omar badrani**  
+- GitHub: https://github.com/omarbadrani  
+- Email: omarbadrani770@gmail.com
 
 ---
 
-⭐ **Si ce projet vous est utile, n'oubliez pas de mettre une étoile sur GitHub !** ⭐
+⭐ **If this project is useful, please star the repository!** ⭐
 
 ---
 
-## 🚀 Prochaines Étapes
+**Version**: 1.0.0  
+**Python**: 3.7+  
+**OS**: Windows, Linux, macOS
 
-### Pour les Utilisateurs
-1. Tester avec votre webcam
-2. Importer des vidéos d'exemple
-3. Personnaliser les paramètres de détection
-4. Intégrer dans votre système existant
-
-### Pour les Développeurs
-1. Explorer le code source
-2. Ajouter de nouvelles fonctionnalités
-3. Optimiser les performances
-4. Contribuer au projet
-
-### Pour les Entreprises
-1. Évaluer les besoins spécifiques
-2. Planifier un déploiement pilote
-3. Former le personnel
-4. Intégrer avec les systèmes existants
-
----
-
-**Dernière mise à jour** : Janvier 2025  
-**Version** : 1.0.0  
-**Support Python** : 3.7+  
-**Systèmes supportés** : Windows, Linux, macOS
-
----
-
-*ANPR System - Surveillance intelligente pour une sécurité renforcée* 🚗🔍
+*ANPR System - Intelligent surveillance for enhanced security* 🚗🔍
