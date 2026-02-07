@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import threading
 import queue
+import re
 
 # Configuration du chemin Tesseract pour Windows
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -87,94 +88,474 @@ class LicensePlateDetector:
 
         self.db_manager = db_manager
 
-    def preprocess_image(self, image):
-        """Prétraite l'image pour améliorer la détection de texte"""
+    def preprocess_for_small_images(self, image):
+        """Prétraitement spécial pour les petites images"""
+        # Agrandir l'image si elle est trop petite
+        height, width = image.shape[:2]
+
+        if height < 300 or width < 300:
+            # Calculer le facteur d'agrandissement
+            scale = max(600 / height, 600 / width)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+
+        return image
+
+    def enhance_image_quality(self, image):
+        """Améliore la qualité de l'image pour une meilleure détection"""
+        # Agrandir si nécessaire
+        image = self.preprocess_for_small_images(image)
+
         # Conversion en niveaux de gris
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
+        # CLAHE pour améliorer le contraste local
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+
         # Réduction du bruit
-        gray = cv2.bilateralFilter(gray, 11, 17, 17)
+        gray = cv2.bilateralFilter(gray, 9, 75, 75)
+        gray = cv2.medianBlur(gray, 3)
 
-        # Detection des bords
-        edged = cv2.Canny(gray, 170, 200)
+        # Améliorer la netteté
+        kernel_sharpen = np.array([[-1, -1, -1],
+                                   [-1, 9, -1],
+                                   [-1, -1, -1]])
+        gray = cv2.filter2D(gray, -1, kernel_sharpen)
 
-        # Trouver les contours dans l'image des bords, puis ne garder que les plus grands
-        contours, _ = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:30]
+        return gray
 
-        return gray, contours
+    def find_license_plate_regions(self, image):
+        """Trouve les régions potentiellement intéressantes"""
+        gray = self.enhance_image_quality(image)
 
-    def detect_license_plate(self, frame):
-        """Détecte et reconnaît les plaques d'immatriculation dans une image"""
+        # Plusieurs méthodes pour trouver les régions de texte
+
+        # Méthode 1: Seuillage adaptatif inversé
+        thresh1 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                        cv2.THRESH_BINARY_INV, 11, 2)
+
+        # Méthode 2: Seuillage Otsu inversé
+        _, thresh2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+        # Méthode 3: Détection de bords
+        edges = cv2.Canny(gray, 50, 150)
+
+        # Combiner les méthodes
+        combined = cv2.bitwise_or(thresh1, thresh2)
+        combined = cv2.bitwise_or(combined, edges)
+
+        # Opérations morphologiques pour regrouper les régions
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        combined = cv2.dilate(combined, kernel, iterations=2)
+        combined = cv2.erode(combined, kernel, iterations=1)
+
+        # Trouver les contours
+        contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # Filtrer et trier les contours
+        potential_regions = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area > 500:  # Aire minimale
+                x, y, w, h = cv2.boundingRect(contour)
+
+                # Ratio largeur/hauteur pour les plaques
+                aspect_ratio = w / float(h)
+                if 1.2 < aspect_ratio < 6.0:  # Ratio plus large
+                    potential_regions.append((contour, x, y, w, h))
+
+        # Trier par aire
+        potential_regions.sort(key=lambda x: cv2.contourArea(x[0]), reverse=True)
+
+        return gray, potential_regions[:10]  # Prendre les 10 plus grandes régions
+
+    def extract_and_preprocess_plate(self, gray_image, region):
+        """Extrait et prétraite une région potentielle de plaque"""
+        contour, x, y, w, h = region
+
+        # Ajouter une marge
+        margin_x = int(w * 0.15)
+        margin_y = int(h * 0.15)
+        x_start = max(0, x - margin_x)
+        y_start = max(0, y - margin_y)
+        x_end = min(gray_image.shape[1], x + w + margin_x)
+        y_end = min(gray_image.shape[0], y + h + margin_y)
+
+        # Extraire la région
+        plate_region = gray_image[y_start:y_end, x_start:x_end]
+
+        # Redimensionner pour OCR si nécessaire
+        if plate_region.shape[0] < 50:
+            scale = 100 / plate_region.shape[0]
+            new_width = int(plate_region.shape[1] * scale)
+            plate_region = cv2.resize(plate_region, (new_width, 100), interpolation=cv2.INTER_CUBIC)
+
+        # Plusieurs méthodes de seuillage
+        # 1. Seuillage adaptatif
+        thresh1 = cv2.adaptiveThreshold(plate_region, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                        cv2.THRESH_BINARY, 11, 2)
+
+        # 2. Seuillage Otsu
+        _, thresh2 = cv2.threshold(plate_region, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # 3. CLAHE + Otsu
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(plate_region)
+        _, thresh3 = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # Choisir la meilleure par contraste
+        images = [thresh1, thresh2, thresh3]
+        contrasts = [np.std(img) for img in images]
+        best_idx = np.argmax(contrasts)
+        best_image = images[best_idx]
+
+        # Nettoyer l'image
+        kernel = np.ones((2, 2), np.uint8)
+        best_image = cv2.morphologyEx(best_image, cv2.MORPH_CLOSE, kernel)
+        best_image = cv2.morphologyEx(best_image, cv2.MORPH_OPEN, kernel)
+
+        # Ajouter une bordure
+        best_image = cv2.copyMakeBorder(best_image, 20, 20, 20, 20,
+                                        cv2.BORDER_CONSTANT, value=255)
+
+        return best_image, (x_start, y_start, x_end - x_start, y_end - y_start)
+
+    def recognize_text(self, plate_image):
+        """Reconnaît le texte sur l'image de plaque"""
+        # Configurations OCR pour plaques
+        configs = [
+            '--psm 7 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+            '--psm 8 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+            '--psm 13 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+        ]
+
+        best_text = ""
+        best_confidence = 0
+
+        for config in configs:
+            try:
+                data = pytesseract.image_to_data(plate_image, config=config, output_type=pytesseract.Output.DICT)
+
+                # Extraire texte avec bonne confiance
+                texts = []
+                confidences = []
+
+                for i in range(len(data['text'])):
+                    text = data['text'][i].strip()
+                    if text and int(data['conf'][i]) > 30:  # Seuil bas
+                        texts.append(text)
+                        confidences.append(int(data['conf'][i]))
+
+                if texts:
+                    combined_text = ''.join(texts).replace(' ', '').upper()
+                    avg_confidence = sum(confidences) / len(confidences)
+
+                    # Nettoyer
+                    cleaned = re.sub(r'[^A-Z0-9]', '', combined_text)
+
+                    # Valider format basique
+                    if 4 <= len(cleaned) <= 10 and avg_confidence > best_confidence:
+                        best_text = cleaned
+                        best_confidence = avg_confidence
+
+            except Exception as e:
+                continue
+
+        return best_text if best_text else None
+
+    def detect_license_plate_in_frame(self, frame):
+        """Détecte la plaque dans une frame"""
         try:
-            # Redimensionner l'image pour un traitement plus rapide
-            frame = imutils.resize(frame, width=800)
+            # Redimensionner pour traitement
             original = frame.copy()
+            frame = imutils.resize(frame, width=1000)  # Agrandir plus
 
-            # Prétraitement de l'image
-            gray, contours = self.preprocess_image(frame)
+            print(f"Dimensions après redimensionnement: {frame.shape}")
 
-            plate = None
-            for contour in contours:
-                # Approximation du contour
-                peri = cv2.arcLength(contour, True)
-                approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+            # Trouver les régions potentielles
+            gray, potential_regions = self.find_license_plate_regions(frame)
 
-                # Si le contour a 4 coins, c'est probablement une plaque
-                if len(approx) == 4:
-                    plate = approx
-                    x, y, w, h = cv2.boundingRect(contour)
+            best_plate_text = None
+            best_bbox = None
 
-                    # Vérifier le ratio de la plaque (les plaques ont généralement un ratio largeur/hauteur spécifique)
-                    aspect_ratio = w / h
-                    if 2 <= aspect_ratio <= 5:
-                        break
+            # Essayer chaque région
+            for i, region in enumerate(potential_regions):
+                print(f"Test région {i + 1}: {region[1:5]}")
 
-            if plate is not None:
-                # Extraire la région de la plaque
-                mask = np.zeros(gray.shape, np.uint8)
-                new_image = cv2.drawContours(mask, [plate], 0, 255, -1)
-                new_image = cv2.bitwise_and(frame, frame, mask=mask)
+                # Extraire et prétraiter
+                plate_image, bbox = self.extract_and_preprocess_plate(gray, region)
 
-                # Extraire les coordonnées de la plaque
-                (x, y) = np.where(mask == 255)
-                (topx, topy) = (np.min(x), np.min(y))
-                (bottomx, bottomy) = (np.max(x), np.max(y))
-                cropped = gray[topx:bottomx + 1, topy:bottomy + 1]
+                # Sauvegarder pour débogage
+                debug_path = f"detected_plates/debug_region_{i}.jpg"
+                cv2.imwrite(debug_path, plate_image)
+                print(f"Région {i + 1} sauvegardée: {debug_path}")
 
-                # Appliquer un seuil pour améliorer la reconnaissance OCR
-                _, thresh = cv2.threshold(cropped, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                # Reconnaître texte
+                plate_text = self.recognize_text(plate_image)
 
-                # OCR sur l'image recadrée
-                try:
-                    text = pytesseract.image_to_string(thresh,
-                                                       config='--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
-                except Exception as e:
-                    print(f"Erreur OCR: {e}")
-                    text = ""
+                if plate_text:
+                    print(f"Texte potentiel détecté: {plate_text}")
+                    best_plate_text = plate_text
+                    best_bbox = bbox
+                    break
 
-                if text.strip():
-                    # Nettoyer le texte détecté
-                    text = ''.join(e for e in text if e.isalnum()).upper()
+            # Si détection réussie
+            if best_plate_text and best_bbox:
+                x, y, w, h = best_bbox
 
-                    # Dessiner un rectangle autour de la plaque et afficher le texte
-                    cv2.drawContours(frame, [plate], -1, (0, 255, 0), 3)
-                    cv2.putText(frame, text, (topy, topx - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                # Ajuster les coordonnées pour l'image originale
+                scale_x = original.shape[1] / frame.shape[1]
+                scale_y = original.shape[0] / frame.shape[0]
+                x = int(x * scale_x)
+                y = int(y * scale_y)
+                w = int(w * scale_x)
+                h = int(h * scale_y)
 
-                    # Sauvegarder l'image et les données
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    image_path = f"detected_plates/plate_{timestamp}_{text}.jpg"
-                    cv2.imwrite(image_path, thresh)
+                # Dessiner sur l'image originale
+                cv2.rectangle(original, (x, y), (x + w, y + h), (0, 255, 0), 3)
+                cv2.putText(original, best_plate_text, (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
 
-                    return frame, text, image_path
+                # Sauvegarder
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                image_path = f"detected_plates/plate_{timestamp}_{best_plate_text}.jpg"
+                cv2.imwrite(image_path, original[y:y + h, x:x + w])
 
+                return original, best_plate_text, image_path
+
+            print("Aucune plaque détectée après vérification de toutes les régions")
             return frame, None, None
+
         except Exception as e:
-            print(f"Erreur dans detect_license_plate: {e}")
+            print(f"Erreur détection: {e}")
+            import traceback
+            traceback.print_exc()
             return frame, None, None
+
+    def process_image_with_direct_ocr(self, image_path):
+        """Approche alternative: OCR direct sur l'image entière"""
+        try:
+            # Lire image
+            image = cv2.imread(image_path)
+            if image is None:
+                return None, None
+
+            # Agrandir l'image
+            height, width = image.shape[:2]
+            if height < 400 or width < 400:
+                scale = max(800 / height, 800 / width)
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+                image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+
+            # Convertir en niveaux de gris
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+            # Améliorer le contraste
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            gray = clahe.apply(gray)
+
+            # Lisser
+            gray = cv2.medianBlur(gray, 3)
+
+            # Seuillage
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+            # OCR sur l'image entière
+            config = '--psm 11 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+            text = pytesseract.image_to_string(thresh, config=config)
+
+            # Chercher des motifs de plaque
+            patterns = [
+                r'\b[A-Z]{2}\d{3}[A-Z]{2}\b',  # Format français: AB123CD
+                r'\b\d{4}[A-Z]{2}\d{2}\b',  # Format ancien: 1234AB56
+                r'\b\d{3,4}[A-Z]{2,3}\d{0,3}\b',  # Format tunisien approximatif
+                r'\b[A-Z]{1,3}\d{3,6}[A-Z]{0,3}\b'  # Format général
+            ]
+
+            for pattern in patterns:
+                matches = re.findall(pattern, text.upper())
+                if matches:
+                    # Prendre la meilleure correspondance (la plus longue)
+                    best_match = max(matches, key=len)
+                    if len(best_match) >= 5:
+                        print(f"Plaque trouvée par OCR direct: {best_match}")
+
+                        # Sauvegarder
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        image_path = f"detected_plates/ocr_direct_{timestamp}_{best_match}.jpg"
+                        cv2.imwrite(image_path, image)
+
+                        return best_match, image_path
+
+            return None, None
+
+        except Exception as e:
+            print(f"Erreur OCR direct: {e}")
+            return None, None
+
+    def process_image_file(self, image_path, progress_queue=None):
+        """Traite une image avec plusieurs méthodes"""
+        try:
+            if not os.path.exists(image_path):
+                if progress_queue:
+                    progress_queue.put(("error", f"Fichier introuvable: {image_path}"))
+                return False
+
+            image = cv2.imread(image_path)
+            if image is None:
+                if progress_queue:
+                    progress_queue.put(("error", f"Impossible de lire l'image: {image_path}"))
+                return False
+
+            print(f"\n=== Traitement de l'image: {os.path.basename(image_path)} ===")
+            print(f"Dimensions originales: {image.shape}")
+
+            # Méthode 1: Détection par contours
+            print("\nMéthode 1: Détection par contours...")
+            processed_image, plate_text, saved_path = self.detect_license_plate_in_frame(image)
+
+            if plate_text:
+                print(f"SUCCÈS avec méthode 1: {plate_text}")
+                self.db_manager.save_to_database(plate_text, saved_path, f"image: {os.path.basename(image_path)}")
+
+                cv2.imshow(f"Détection - {plate_text}", processed_image)
+                cv2.waitKey(3000)
+                cv2.destroyAllWindows()
+
+                if progress_queue:
+                    progress_queue.put(("complete", 1, plate_text))
+                return True
+
+            # Méthode 2: OCR direct
+            print("\nMéthode 2: OCR direct...")
+            plate_text, saved_path = self.process_image_with_direct_ocr(image_path)
+
+            if plate_text:
+                print(f"SUCCÈS avec méthode 2: {plate_text}")
+                self.db_manager.save_to_database(plate_text, saved_path,
+                                                 f"image: OCR direct - {os.path.basename(image_path)}")
+
+                # Afficher l'image
+                img = cv2.imread(image_path)
+                cv2.imshow(f"OCR Direct - {plate_text}", img)
+                cv2.waitKey(3000)
+                cv2.destroyAllWindows()
+
+                if progress_queue:
+                    progress_queue.put(("complete", 1, plate_text))
+                return True
+
+            # Méthode 3: Découpage manuel
+            print("\nMéthode 3: Découpage manuel...")
+            result = self.try_manual_cropping(image_path)
+            if result:
+                plate_text, saved_path = result
+                print(f"SUCCÈS avec méthode 3: {plate_text}")
+                self.db_manager.save_to_database(plate_text, saved_path,
+                                                 f"image: Manuel - {os.path.basename(image_path)}")
+
+                if progress_queue:
+                    progress_queue.put(("complete", 1, plate_text))
+                return True
+
+            print("\nÉCHEC: Aucune méthode n'a fonctionné")
+            message = "Aucune plaque détectée. Essayez avec une image plus grande et plus claire."
+            print(message)
+
+            cv2.destroyAllWindows()
+
+            if progress_queue:
+                progress_queue.put(("complete", 0, message))
+            return False
+
+        except Exception as e:
+            error_msg = f"Erreur: {e}"
+            print(error_msg)
+            if progress_queue:
+                progress_queue.put(("error", error_msg))
+            cv2.destroyAllWindows()
+            return False
+
+    def try_manual_cropping(self, image_path):
+        """Permet à l'utilisateur de sélectionner manuellement la plaque"""
+        try:
+            image = cv2.imread(image_path)
+            if image is None:
+                return None
+
+            # Agrandir l'image pour sélection
+            height, width = image.shape[:2]
+            display_image = image.copy()
+
+            if height < 600:
+                scale = 600 / height
+                new_width = int(width * scale)
+                new_height = 600
+                display_image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+
+            # Demander à l'utilisateur de sélectionner la plaque
+            print("\nSélectionnez la plaque avec la souris (rectangle)")
+            print("Cliquez et glissez pour dessiner un rectangle, puis appuyez sur ENTER")
+
+            # Sélection ROI
+            roi = cv2.selectROI("Sélectionnez la plaque", display_image, showCrosshair=True, fromCenter=False)
+            cv2.destroyAllWindows()
+
+            if roi[2] > 0 and roi[3] > 0:  # Si une sélection valide
+                x, y, w, h = roi
+
+                # Ajuster les coordonnées si l'image a été redimensionnée
+                if height < 600:
+                    scale_factor = height / 600
+                    x = int(x * scale_factor)
+                    y = int(y * scale_factor)
+                    w = int(w * scale_factor)
+                    h = int(h * scale_factor)
+
+                # Extraire la région
+                plate_region = image[y:y + h, x:x + w]
+
+                if plate_region.size == 0:
+                    return None
+
+                # Prétraiter pour OCR
+                gray = cv2.cvtColor(plate_region, cv2.COLOR_BGR2GRAY)
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                enhanced = clahe.apply(gray)
+                _, thresh = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+                # Agrandir pour OCR
+                if thresh.shape[0] < 100:
+                    scale = 150 / thresh.shape[0]
+                    new_width = int(thresh.shape[1] * scale)
+                    thresh = cv2.resize(thresh, (new_width, 150), interpolation=cv2.INTER_CUBIC)
+
+                # OCR
+                config = '--psm 8 --oem 3 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+                text = pytesseract.image_to_string(thresh, config=config)
+
+                # Nettoyer
+                cleaned = re.sub(r'[^A-Z0-9]', '', text.upper())
+
+                if len(cleaned) >= 4:
+                    # Sauvegarder
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    saved_path = f"detected_plates/manual_{timestamp}_{cleaned}.jpg"
+                    cv2.imwrite(saved_path, plate_region)
+
+                    return cleaned, saved_path
+
+            return None
+
+        except Exception as e:
+            print(f"Erreur découpage manuel: {e}")
+            return None
 
     def process_video(self, video_path, progress_queue):
-        """Traite une vidéo pour détecter les plaques d'immatriculation"""
+        """Traite une vidéo"""
         try:
             cap = cv2.VideoCapture(video_path)
 
@@ -183,21 +564,15 @@ class LicensePlateDetector:
                 progress_queue.put(("error", "Impossible d'ouvrir la vidéo"))
                 return False
 
-            # Obtenir les propriétés de la vidéo
             fps = cap.get(cv2.CAP_PROP_FPS)
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            duration = total_frames / fps if fps > 0 else 0
 
             print(f"Traitement de la vidéo: {os.path.basename(video_path)}")
-            print(f"Durée: {duration:.2f} secondes, {total_frames} images")
+            print(f"Images totales: {total_frames}")
 
             frame_count = 0
             detection_count = 0
-            last_detection_time = 0
-            detection_cooldown = 2  # Secondes entre deux détections
-
-            # Calculer le saut d'images pour optimiser le traitement
-            frame_skip = max(1, int(fps / 5))  # Traiter 5 images par seconde maximum
+            frame_skip = max(1, int(fps / 3))
 
             while True:
                 ret, frame = cap.read()
@@ -205,22 +580,17 @@ class LicensePlateDetector:
                     break
 
                 frame_count += 1
-
-                # Sauter des images pour optimiser le traitement
                 if frame_count % frame_skip != 0:
                     continue
 
-                # Détecter les plaques d'immatriculation
-                processed_frame, plate_text, image_path = self.detect_license_plate(frame)
+                # Détecter
+                processed_frame, plate_text, image_path = self.detect_license_plate_in_frame(frame)
 
-                # Sauvegarder si une plaque est détectée
-                current_time = frame_count / fps
-                if plate_text and (current_time - last_detection_time) > detection_cooldown:
+                if plate_text:
                     self.db_manager.save_to_database(plate_text, image_path, f"vidéo: {os.path.basename(video_path)}")
                     detection_count += 1
-                    last_detection_time = current_time
 
-                # Mettre à jour la progression
+                # Mettre à jour progression
                 if frame_count % (frame_skip * 10) == 0:
                     progress = (frame_count / total_frames) * 100
                     progress_queue.put(("progress", progress, detection_count))
@@ -228,106 +598,29 @@ class LicensePlateDetector:
             cap.release()
 
             progress_queue.put(("complete", detection_count))
-            print(f"Traitement terminé. {detection_count} plaques détectées dans la vidéo.")
+            print(f"Traitement terminé. {detection_count} plaques détectées.")
             return True
         except Exception as e:
             print(f"Erreur dans process_video: {e}")
             progress_queue.put(("error", str(e)))
             return False
 
-    def start_surveillance(self, camera_index=0, progress_queue=None, stop_event=None):
-        """Démarre la surveillance avec la caméra"""
-        try:
-            cap = cv2.VideoCapture(camera_index)
-
-            if not cap.isOpened():
-                print("Erreur: Impossible d'accéder à la caméra")
-                # Essayer avec d'autres index de caméra
-                for i in range(1, 5):
-                    cap = cv2.VideoCapture(i)
-                    if cap.isOpened():
-                        print(f"Caméra trouvée à l'index {i}")
-                        camera_index = i
-                        break
-                else:
-                    print("Aucune caméra trouvée. Vérifiez la connexion.")
-                    if progress_queue:
-                        progress_queue.put(("error", "Aucune caméra trouvée"))
-                    return
-
-            print("Surveillance démarrée. Appuyez sur 'q' pour quitter.")
-
-            last_detection_time = 0
-            detection_cooldown = 5  # Secondes entre deux détections
-            detection_count = 0
-
-            # Créer une fenêtre pour afficher le flux vidéo
-            cv2.namedWindow('Surveillance de Plaques d\'Immatriculation', cv2.WINDOW_NORMAL)
-            cv2.resizeWindow('Surveillance de Plaques d\'Immatriculation', 800, 600)
-
-            while not stop_event.is_set():
-                ret, frame = cap.read()
-                if not ret:
-                    print("Erreur: Impossible de lire le flux vidéo")
-                    break
-
-                # Détecter les plaques d'immatriculation
-                processed_frame, plate_text, image_path = self.detect_license_plate(frame)
-
-                # Afficher le flux vidéo avec les détections
-                cv2.imshow('Surveillance de Plaques d\'Immatriculation', processed_frame)
-
-                # Sauvegarder si une plaque est détectée
-                current_time = time.time()
-                if plate_text and (current_time - last_detection_time) > detection_cooldown:
-                    self.db_manager.save_to_database(plate_text, image_path)
-                    last_detection_time = current_time
-                    detection_count += 1
-
-                    if progress_queue:
-                        progress_queue.put(("detection", detection_count))
-
-                # Vérifier si l'utilisateur veut quitter
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    break
-
-            cap.release()
-            cv2.destroyAllWindows()
-
-            if progress_queue:
-                progress_queue.put(("complete", detection_count))
-
-        except Exception as e:
-            print(f"Erreur dans start_surveillance: {e}")
-            if progress_queue:
-                progress_queue.put(("error", str(e)))
-            try:
-                cv2.destroyAllWindows()
-            except:
-                pass
-
 
 class LicensePlateApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Système de Détection de Plaques d'Immatriculation")
-        self.root.geometry("500x400")
+        self.root.title("Système de Détection de Plaques - Version Améliorée")
+        self.root.geometry("650x600")
 
-        # Créer le gestionnaire de base de données
         self.db_manager = DatabaseManager()
         self.detector = LicensePlateDetector(self.db_manager)
 
         self.processing = False
         self.surveillance_running = False
         self.stop_surveillance_event = threading.Event()
-
-        # File d'attente pour la communication entre les threads
         self.progress_queue = queue.Queue()
 
         self.create_widgets()
-
-        # Démarrer la vérification périodique de la file d'attente
         self.check_progress_queue()
 
     def create_widgets(self):
@@ -340,20 +633,39 @@ class LicensePlateApp:
         button_frame = tk.Frame(self.root)
         button_frame.pack(pady=10)
 
-        # Bouton pour démarrer la surveillance caméra
+        # Boutons
         self.camera_btn = tk.Button(button_frame, text="Démarrer Surveillance Caméra",
-                                    command=self.toggle_camera, height=2, width=30)
-        self.camera_btn.pack(pady=10)
+                                    command=self.toggle_camera, height=2, width=35)
+        self.camera_btn.pack(pady=5)
 
-        # Bouton pour importer une vidéo
-        video_btn = tk.Button(button_frame, text="Importer et Traiter une Vidéo",
-                              command=self.import_video, height=2, width=30)
-        video_btn.pack(pady=10)
+        image_btn = tk.Button(button_frame, text="Traiter une Image (Auto)",
+                              command=self.import_image, height=2, width=35)
+        image_btn.pack(pady=5)
 
-        # Bouton pour afficher les résultats
+        manual_btn = tk.Button(button_frame, text="Traiter une Image (Manuel)",
+                               command=self.import_image_manual, height=2, width=35)
+        manual_btn.pack(pady=5)
+
+        video_btn = tk.Button(button_frame, text="Traiter une Vidéo",
+                              command=self.import_video, height=2, width=35)
+        video_btn.pack(pady=5)
+
         results_btn = tk.Button(button_frame, text="Afficher les Résultats",
-                                command=self.show_results, height=2, width=30)
-        results_btn.pack(pady=10)
+                                command=self.show_results, height=2, width=35)
+        results_btn.pack(pady=5)
+
+        # Frame pour les conseils
+        tips_frame = tk.LabelFrame(self.root, text="Instructions")
+        tips_frame.pack(pady=10, padx=20, fill=tk.X)
+
+        tips_text = """Pour de meilleurs résultats:
+1. Utilisez 'Traiter une Image (Auto)' d'abord
+2. Si ça échoue, utilisez 'Traiter une Image (Manuel)'
+3. Pour mode manuel: tracez un rectangle autour de la plaque
+4. Utilisez des images de bonne qualité (> 800x600 pixels)"""
+
+        tips_label = tk.Label(tips_frame, text=tips_text, justify=tk.LEFT)
+        tips_label.pack(padx=10, pady=5)
 
         # Frame pour la progression
         progress_frame = tk.Frame(self.root)
@@ -370,7 +682,7 @@ class LicensePlateApp:
 
         # Bouton pour quitter
         quit_btn = tk.Button(self.root, text="Quitter",
-                             command=self.quit_app, height=2, width=30)
+                             command=self.quit_app, height=2, width=35)
         quit_btn.pack(pady=10)
 
         # Label de statut
@@ -378,7 +690,6 @@ class LicensePlateApp:
         self.status_label.pack(side=tk.BOTTOM, fill=tk.X)
 
     def check_progress_queue(self):
-        """Vérifie périodiquement la file d'attente pour les mises à jour de progression"""
         try:
             while True:
                 try:
@@ -387,27 +698,32 @@ class LicensePlateApp:
                 except queue.Empty:
                     break
         finally:
-            # Planifier la prochaine vérification
             self.root.after(100, self.check_progress_queue)
 
     def handle_progress_message(self, message):
-        """Traite les messages de progression de la file d'attente"""
         msg_type = message[0]
 
         if msg_type == "progress":
             progress, detection_count = message[1], message[2]
             self.progress_bar['value'] = progress
             self.detection_label.config(text=f"Plaques détectées: {detection_count}")
-            self.status_label.config(text=f"Traitement en cours: {progress:.1f}%")
-        elif msg_type == "detection":
-            detection_count = message[1]
-            self.detection_label.config(text=f"Plaques détectées: {detection_count}")
+            self.status_label.config(text=f"Traitement: {progress:.1f}%")
         elif msg_type == "complete":
-            detection_count = message[1]
-            self.processing = False
-            self.status_label.config(text="Traitement terminé")
-            self.detection_label.config(text=f"Plaques détectées: {detection_count}")
-            messagebox.showinfo("Succès", f"Traitement terminé. {detection_count} plaques détectées.")
+            if len(message) == 2:
+                detection_count = message[1]
+                self.processing = False
+                self.status_label.config(text="Terminé")
+                self.detection_label.config(text=f"Plaques détectées: {detection_count}")
+                messagebox.showinfo("Succès", f"{detection_count} plaques détectées.")
+            elif len(message) == 3:
+                detection_count, plate_text = message[1], message[2]
+                self.processing = False
+                self.status_label.config(text="Terminé")
+                if detection_count > 0:
+                    self.detection_label.config(text=f"Plaques détectées: {detection_count}")
+                    messagebox.showinfo("Succès", f"Plaque: {plate_text}")
+                else:
+                    messagebox.showinfo("Information", plate_text)
         elif msg_type == "error":
             error_msg = message[1]
             self.processing = False
@@ -429,11 +745,10 @@ class LicensePlateApp:
             self.surveillance_running = True
             self.stop_surveillance_event.clear()
             self.camera_btn.config(text="Arrêter Surveillance Caméra")
-            self.status_label.config(text="Surveillance caméra en cours...")
+            self.status_label.config(text="Surveillance en cours...")
             self.detection_label.config(text="Plaques détectées: 0")
             self.root.update()
 
-            # Démarrer dans un thread séparé
             thread = threading.Thread(target=self.run_camera)
             thread.daemon = True
             thread.start()
@@ -445,8 +760,65 @@ class LicensePlateApp:
         )
         self.processing = False
         self.surveillance_running = False
-        self.status_label.config(text="Surveillance caméra terminée")
+        self.status_label.config(text="Surveillance terminée")
         self.camera_btn.config(text="Démarrer Surveillance Caméra")
+
+    def import_image(self):
+        if self.processing:
+            messagebox.showwarning("Attention", "Un traitement est déjà en cours.")
+            return
+
+        file_path = filedialog.askopenfilename(
+            title="Sélectionner une image",
+            filetypes=[("Fichiers image", "*.jpg *.jpeg *.png *.bmp *.tiff *.gif"), ("Tous les fichiers", "*.*")]
+        )
+
+        if file_path:
+            self.processing = True
+            self.status_label.config(text=f"Traitement: {os.path.basename(file_path)}")
+            self.progress_bar['value'] = 0
+            self.root.update()
+
+            thread = threading.Thread(target=self.process_image_in_thread, args=(file_path,))
+            thread.daemon = True
+            thread.start()
+        else:
+            self.status_label.config(text="Aucune image sélectionnée")
+
+    def process_image_in_thread(self, file_path):
+        self.detector.process_image_file(file_path, self.progress_queue)
+
+    def import_image_manual(self):
+        """Import d'image avec sélection manuelle"""
+        if self.processing:
+            messagebox.showwarning("Attention", "Un traitement est déjà en cours.")
+            return
+
+        file_path = filedialog.askopenfilename(
+            title="Sélectionner une image pour découpage manuel",
+            filetypes=[("Fichiers image", "*.jpg *.jpeg *.png *.bmp *.tiff *.gif"), ("Tous les fichiers", "*.*")]
+        )
+
+        if file_path:
+            self.processing = True
+            self.status_label.config(text=f"Mode manuel: {os.path.basename(file_path)}")
+            self.root.update()
+
+            thread = threading.Thread(target=self.process_image_manual_in_thread, args=(file_path,))
+            thread.daemon = True
+            thread.start()
+        else:
+            self.status_label.config(text="Aucune image sélectionnée")
+
+    def process_image_manual_in_thread(self, file_path):
+        result = self.detector.try_manual_cropping(file_path)
+        if result:
+            plate_text, saved_path = result
+            self.db_manager.save_to_database(plate_text, saved_path, f"image: Manuel - {os.path.basename(file_path)}")
+            self.progress_queue.put(("complete", 1, plate_text))
+        else:
+            self.progress_queue.put(("complete", 0, "Aucune plaque détectée en mode manuel"))
+        self.processing = False
 
     def import_video(self):
         if self.processing:
@@ -460,12 +832,11 @@ class LicensePlateApp:
 
         if file_path:
             self.processing = True
-            self.status_label.config(text=f"Traitement de la vidéo: {os.path.basename(file_path)}")
+            self.status_label.config(text=f"Traitement vidéo: {os.path.basename(file_path)}")
             self.progress_bar['value'] = 0
             self.detection_label.config(text="Plaques détectées: 0")
             self.root.update()
 
-            # Démarrer le traitement dans un thread séparé
             thread = threading.Thread(target=self.process_video_in_thread, args=(file_path,))
             thread.daemon = True
             thread.start()
@@ -476,29 +847,24 @@ class LicensePlateApp:
         self.detector.process_video(file_path, self.progress_queue)
 
     def show_results(self):
-        # Créer une nouvelle fenêtre pour afficher les résultats
         results_window = tk.Toplevel(self.root)
-        results_window.title("Plaques d'Immatriculation Détectées")
+        results_window.title("Plaques Détectées")
         results_window.geometry("800x500")
 
-        # Récupérer les données de la base de données
         try:
             rows = self.db_manager.get_all_plates()
 
-            # Créer un cadre avec une barre de défilement
             frame = tk.Frame(results_window)
             frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
             scrollbar = tk.Scrollbar(frame)
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-            # Utiliser un Text widget au lieu de Listbox pour un meilleur affichage
             text_widget = tk.Text(frame, yscrollcommand=scrollbar.set, wrap=tk.WORD, width=90, height=20)
             text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
             scrollbar.config(command=text_widget.yview)
 
-            # Ajouter les données au texte
             if rows:
                 text_widget.insert(tk.END, "Plaques d'Immatriculation Détectées\n")
                 text_widget.insert(tk.END, "=" * 60 + "\n\n")
@@ -510,12 +876,10 @@ class LicensePlateApp:
                     text_widget.insert(tk.END, f"Image: {row[3]}\n")
                     text_widget.insert(tk.END, "-" * 40 + "\n\n")
             else:
-                text_widget.insert(tk.END, "Aucune plaque détectée pour le moment")
+                text_widget.insert(tk.END, "Aucune plaque détectée")
 
-            # Empêcher l'édition du texte
             text_widget.config(state=tk.DISABLED)
 
-            # Bouton pour exporter les résultats
             export_btn = tk.Button(results_window, text="Exporter les Résultats",
                                    command=self.export_results)
             export_btn.pack(pady=10)
@@ -524,7 +888,6 @@ class LicensePlateApp:
             messagebox.showerror("Erreur", f"Impossible de charger les résultats: {e}")
 
     def export_results(self):
-        # Exporter les résultats en fichier texte
         file_path = filedialog.asksaveasfilename(
             defaultextension=".txt",
             filetypes=[("Fichiers texte", "*.txt"), ("Tous les fichiers", "*.*")]
